@@ -1,0 +1,255 @@
+---
+title: "Titanic Dataset"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(data.table)
+library(ggplot2)
+library(plotly)
+library(tidyverse)
+library(DT)
+library(ISLR)
+
+path<-getwd()
+
+train_data<-fread(paste(path,"data","train.csv",sep="/"))
+test_data<-fread(paste(path,"data","test.csv",sep="/"))
+
+
+train_data[,':='(Survived_class=gsub(1,"Survived",Survived))][
+  ,':='(Survived_class=gsub(0,"Died",Survived_class))]
+
+train_melt<-melt(train_data,id.vars =c("PassengerId","Survived","Pclass","Name",
+                                       "Sex","Ticket","Cabin","Embarked"))
+
+
+live_colors<-c("Survived"="darkgreen","Died"="darkred")
+sex_colors<-c("female"="#FF33F0","male"="#2244D0")
+
+
+```
+
+
+
+Dataset description
+=====================================
+
+Row
+-----------------------------------------------------------------------
+
+### Intro
+The Titanic dataset is composed by two groups:
+
+- Train dataset
+- Test dataset
+
+Row
+-----------------------------------------------------------------------
+
+### Number of Measurements
+```{r}
+
+merged<-rbind(train_data[,':='(dataset="Train data")],
+              test_data[,':='(dataset="Test data")],fill=TRUE)
+data_desc<-merged[,.N,by=dataset]%>%
+  ggplot()+
+  geom_col(aes(x=dataset,y=N),fill="darkblue")+
+  theme_bw()+
+  ggtitle("Passengers per Dataset (N)")+
+  xlab("")+ylab("Number of Passengers")
+
+ggplotly(data_desc)
+
+```
+
+### Variable Types
+```{r}
+datatable(t(train_data[,lapply(.SD, class)]))
+```
+
+Row
+-----------------------------------------------------------------------
+
+
+### Gender Pie
+```{r}
+sex_count<-train_data[,.N,by=Sex]
+
+plot_ly(sex_count, labels = ~Sex, values = ~N, type = 'pie')%>%
+  layout(title="Gender Distribution - train data")
+```
+
+
+### Class Pie
+```{r}
+sex_count<-train_data[,.N,by=Pclass]
+
+plot_ly(sex_count, labels = ~Pclass, values = ~N, type = 'pie')%>%
+  layout(title="Ticket Class Distribution - train data")
+```
+
+
+### Survived Pie
+```{r}
+sex_count<-train_data[,.N,by=Survived_class]
+
+plot_ly(sex_count, labels = ~Survived_class, values = ~N, type = 'pie')%>%
+  layout(title="Survival Distribution - train data")
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+###
+All numerical variables are going to be analysed taking into consideration the survived column. The categorical variables will be evaluated in terms of relevance for the percentage of survived people.
+
+
+
+Univariate View
+=====================================
+
+
+Row
+-----------------------------------------------------------------------
+
+###
+In this section only numeric variables are presented and its impact on the survived status is preliminary evaluated.
+
+
+Row
+-----------------------------------------------------------------------
+
+### Gender effect on survival status - Absolute Counts
+```{r}
+gender<-train_data[,.N,by=.(Sex,Survived_class)]%>%
+  ggplot()+
+  geom_col(aes(x=Sex,y=N,fill=Survived_class,group=Survived_class))+
+  theme_bw()+
+  theme(legend.position = "top")+
+  scale_fill_manual(values=live_colors)+
+  ggtitle("Gender effect - Absolute Counts")
+ggplotly(gender)%>%layout(legend = list(x = 0.1, y = 0.9))
+
+```
+
+
+### Gender effect on survival status - Percentage for total of people
+```{r}
+gender_prec<-train_data[,.N,by=.(Sex,Survived_class)][,':='(N=100*N/sum(N))]%>%
+  ggplot()+
+  geom_col(aes(x=Sex,y=N,fill=Survived_class,group=Survived_class))+
+  theme_bw()+
+  theme(legend.position = "top")+
+  scale_fill_manual(values=live_colors)+
+  ggtitle("Gender effect - Percentage")+
+  ylab("N (%)")
+ggplotly(gender_prec)%>%layout(legend = list(x = 0.1, y = 0.9))
+
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+### Survived vs Class (ticket)
+```{r}
+plot3<-train_data[,.N,by=.(Survived_class,Pclass)]%>%
+  ggplot()+
+  geom_col(aes(x=Pclass,y=N,fill=Survived_class))+
+  theme_bw()+
+  theme(legend.position = "top")+
+   scale_fill_manual(values=live_colors)
+
+ggplotly(plot3)%>%layout(legend = list(x = 0.1, y = 0.9))
+
+
+```
+
+
+
+Row
+-----------------------------------------------------------------------
+
+### Survived vs Age
+```{r}
+ ggplotly(ggplot(train_data)+
+  geom_histogram(aes(x=Age,fill=Survived_class),alpha=0.7)+
+  theme_bw()+
+  theme(legend.position = "top")+
+    facet_grid(Sex~.)+
+   scale_fill_manual(values=live_colors)+
+    ggtitle("Age Distribution Sex and Survival \n")
+    )%>%layout(legend=list(x=0.0,y=-0.2))
+
+
+```
+
+
+
+Row
+-----------------------------------------------------------------------
+
+### Survived vs Fare
+```{r}
+ ggplotly(ggplot(train_data,aes(x=Fare,fill=Survived_class))+
+    geom_density(fill = 'Orange', alpha=0.4)+
+  theme_bw()+
+  theme(legend.position = "top")+
+   scale_fill_manual(values=live_colors)+
+    ggtitle("Fare Distribution")+
+    facet_wrap(~Survived)+xlim(0,120)
+    )%>%layout(legend=list(x=0.0,y=-0.2))
+
+
+```
+
+
+Logistic Regression
+========================================
+
+Row
+--------------------------------------------
+
+###
+In this section a simple classification model is run in order to evaluate the variables that increases the most the probability of survival.
+
+
+```{r include=FALSE}
+
+train_data_clean<-train_data[,.(Survived,Pclass,Sex,Age,SibSp,Parch,Fare,Embarked)]
+train_data_clean<-na.omit(train_data_clean)
+
+logistic_fit <- glm(Survived ~ Pclass + Sex + Age + SibSp + Parch + 
+                                            Fare + Embarked, 
+                    data = train_data_clean,
+                    family = binomial)
+
+probab_vector <- predict(logistic_fit,type = "response")
+
+train_data_clean[,':='(Probability=probab_vector)][,                                          ':='(Predicted=ifelse(Probability>0.6,"Died","Survived"))][
+  ,':='(ROC_prep=ifelse(Predicted=="Died" & Survived=="0","TN",""))][,':='(ROC_prep=ifelse(Predicted=="Survived" & Survived=="1","TP",ROC_prep))]
+
+
+```
+
+
+Row
+------------------------------------------------
+
+###
+```{r}
+ggplotly(ggplot(train_data_clean,aes(x=Probability))+
+  geom_histogram()+
+  facet_wrap(~Survived)+
+    theme_bw()+
+    ggtitle("odds distribution for classification model"))
+```
+
+
+
